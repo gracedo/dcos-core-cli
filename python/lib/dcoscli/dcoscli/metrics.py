@@ -1,6 +1,8 @@
 import contextlib
 import json
 
+import retrying
+
 from dcos import emitting, http, util
 from dcos.errors import DCOSException, DCOSHTTPException
 from dcoscli import tables
@@ -24,6 +26,7 @@ def _percentage(dividend, divisor):
     return 0
 
 
+@retrying.retry(wait_fixed=1*100, stop_max_delay=1*1000)
 def _fetch_metrics_datapoints(url):
     """Retrieve the metrics data from any `dcos-metrics` endpoint.
 
@@ -33,9 +36,8 @@ def _fetch_metrics_datapoints(url):
     :rtype: [dict]
     """
     with contextlib.closing(http.get(url)) as r:
-
         if r.status_code == 204:
-            return []
+            raise EmptyMetricsException()
 
         if r.status_code != 200:
             raise DCOSHTTPException(r)
@@ -279,8 +281,18 @@ def print_task_metrics(url, app_url, summary, json_):
     :rtype: int
     """
 
-    container_datapoints = _fetch_metrics_datapoints(url)
-    app_datapoints = _fetch_metrics_datapoints(app_url)
+    container_datapoints = app_datapoints = []
+
+    try:
+        container_datapoints = _fetch_metrics_datapoints(url)
+    except EmptyMetricsException:
+        pass
+
+    try:
+        app_datapoints = _fetch_metrics_datapoints(app_url)
+    except EmptyMetricsException:
+        pass
+
     datapoints = container_datapoints + app_datapoints
     if len(datapoints) == 0:
         raise EmptyMetricsException()
